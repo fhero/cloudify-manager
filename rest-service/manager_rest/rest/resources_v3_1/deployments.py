@@ -24,7 +24,8 @@ from cloudify.models_states import VisibilityState
 from cloudify.deployment_dependencies import (create_deployment_dependency,
                                               DEPENDENCY_CREATOR,
                                               SOURCE_DEPLOYMENT,
-                                              TARGET_DEPLOYMENT)
+                                              TARGET_DEPLOYMENT,
+                                              EXTERNAL_SOURCE)
 
 from manager_rest import utils, manager_exceptions
 from manager_rest.security import SecuredResource
@@ -180,10 +181,17 @@ class InterDeploymentDependencies(SecuredResource):
          deployment.
         :param target_deployment: the deployment that the source deployment
          depends on.
+        :param external_source: info on the source deployment, in case it
+         resides on an external manager (optional)
         :return: an InterDeploymentDependency object containing the information
          of the dependency.
         """
         sm = get_storage_manager()
+
+        # import pydevd
+        # pydevd.settrace('192.168.9.43', port=53100, stdoutToServer=True,
+        #                         stderrToServer=True)
+
         params = self._get_put_dependency_params(sm)
         now = utils.get_formatted_timestamp()
         deployment_dependency = models.InterDeploymentDependencies(
@@ -192,6 +200,7 @@ class InterDeploymentDependencies(SecuredResource):
             source_deployment=params[SOURCE_DEPLOYMENT],
             target_deployment=params[TARGET_DEPLOYMENT],
             created_at=now)
+        # external_source=params.get(EXTERNAL_SOURCE, None),
         return sm.put(deployment_dependency)
 
     @staticmethod
@@ -221,8 +230,9 @@ class InterDeploymentDependencies(SecuredResource):
         return rest_utils.get_json_and_verify_params({
             DEPENDENCY_CREATOR: {'type': text_type},
             SOURCE_DEPLOYMENT: {'type': text_type},
-            TARGET_DEPLOYMENT: {'type': text_type}
+            TARGET_DEPLOYMENT: {'type': text_type},
         })
+        #     EXTERNAL_SOURCE: {'optional': True, 'type': dict}
 
     @staticmethod
     def _get_put_dependency_params(sm):
@@ -232,10 +242,12 @@ class InterDeploymentDependencies(SecuredResource):
                 sm,
                 request_dict.get(SOURCE_DEPLOYMENT),
                 request_dict.get(TARGET_DEPLOYMENT))
+        external_source = request_dict.get(EXTERNAL_SOURCE)
         dependency_params = create_deployment_dependency(
             request_dict.get(DEPENDENCY_CREATOR),
             source_deployment,
             target_deployment)
+            #external_source)
         return dependency_params
 
     @swagger.operation(
