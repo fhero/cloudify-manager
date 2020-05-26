@@ -482,13 +482,27 @@ class ResourceManager(object):
         deployment = self.sm.get(models.Deployment, deployment_id)
 
         # Validate there are no running executions for this deployment
-        deplyment_id_filter = self.create_filters_dict(
+        deployment_id_filter = self.create_filters_dict(
             deployment_id=deployment_id,
             status=ExecutionState.ACTIVE_STATES + ExecutionState.QUEUED_STATE
         )
         executions = self.sm.list(
             models.Execution,
-            filters=deplyment_id_filter
+            filters=deployment_id_filter
+        )
+
+        # Verify deleting the deployment won't affect dependent deployments
+        dep_graph = RecursiveDeploymentDependencies(get_storage_manager())
+        deployment_dependencies = \
+            dep_graph.retrieve_and_display_dependencies(deployment_id)
+        if not deployment_dependencies:
+            return
+        # TODO: track in the events and logs for auditing purposes
+        raise manager_exceptions.DependentExistsError(
+            "Can't delete deployment {0} - the following existing "
+            "installations depend on it:\n{1}".format(
+                deployment_id, deployment_dependencies
+            )
         )
 
         if not delete_db_mode and self._any_running_executions(executions):
@@ -689,6 +703,8 @@ class ResourceManager(object):
         blueprint = self.sm.get(models.Blueprint, blueprint_id)
         self._verify_workflow_in_deployment(workflow_id, deployment,
                                             deployment_id)
+        self._verify_dependencies_not_affected(workflow_id,
+                                               deployment_id, force)
         workflow = deployment.workflows[workflow_id]
 
         if execution:
@@ -2165,6 +2181,25 @@ class ResourceManager(object):
                     current_user.username, deployment.id
                 )
             )
+
+    @staticmethod
+    def _verify_dependencies_not_affected(workflow_id, deployment_id, force):
+        if workflow_id not in ['stop', 'uninstall', 'update']:
+            return
+        dep_graph = RecursiveDeploymentDependencies(get_storage_manager())
+        deployment_dependencies = \
+            dep_graph.retrieve_and_display_dependencies(deployment_id)
+        if not deployment_dependencies:
+            return
+        # TODO: track in the events and logs for auditing purposes
+        if force:
+            return
+        raise manager_exceptions.DependentExistsError(
+            "Can't execute workflow `{0}` on deployment {1} - the "
+            "following existing installations depend on it:\n{2}".format(
+                workflow_id, deployment_id, deployment_dependencies
+            )
+        )
 
     @staticmethod
     def _any_running_executions(executions):

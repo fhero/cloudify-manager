@@ -469,3 +469,18 @@ class RecursiveDeploymentDependencies(object):
                         'tenant': dependency.tenant_name
                     })
         return results
+
+    def retrieve_and_display_dependencies(self, target_id):
+        self.create_dependencies_graph()
+        dependencies = self.retrieve_dependent_deployments(target_id)
+        dependency_display = '  [{0}] Deployment `{1}` {2} the current ' \
+                             'deployment in its node instance `{3}`'
+        type_display = {'component': 'contains',
+                        'sharedresource': 'uses a shared resource from',
+                        'deployment': 'uses capabilities of'}
+        return '\n'.join(
+            [dependency_display.format(i+1,
+                                       d['deployment'],
+                                       type_display[d['dependency_type']],
+                                       d['dependent_node'])
+             for i, d in enumerate(dependencies)])
