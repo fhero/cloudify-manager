@@ -495,15 +495,15 @@ class ResourceManager(object):
         dep_graph = RecursiveDeploymentDependencies(get_storage_manager())
         deployment_dependencies = \
             dep_graph.retrieve_and_display_dependencies(deployment_id)
-        if not deployment_dependencies:
-            return
-        # TODO: track in the events and logs for auditing purposes
-        raise manager_exceptions.DependentExistsError(
-            "Can't delete deployment {0} - the following existing "
-            "installations depend on it:\n{1}".format(
-                deployment_id, deployment_dependencies
-            )
-        )
+        if deployment_dependencies:
+            # TODO: track in the events and logs for auditing purposes
+            if not ignore_live_nodes:
+                raise manager_exceptions.DependentExistsError(
+                    "Can't delete deployment {0} - the following existing "
+                    "installations depend on it:\n{1}".format(
+                        deployment_id, deployment_dependencies
+                    )
+                )
 
         if not delete_db_mode and self._any_running_executions(executions):
             raise manager_exceptions.DependentExistsError(
@@ -703,8 +703,7 @@ class ResourceManager(object):
         blueprint = self.sm.get(models.Blueprint, blueprint_id)
         self._verify_workflow_in_deployment(workflow_id, deployment,
                                             deployment_id)
-        self._verify_dependencies_not_affected(workflow_id,
-                                               deployment_id, force)
+        self._verify_dependencies_not_affected(workflow_id, deployment, force)
         workflow = deployment.workflows[workflow_id]
 
         if execution:
@@ -2182,24 +2181,48 @@ class ResourceManager(object):
                 )
             )
 
-    @staticmethod
-    def _verify_dependencies_not_affected(workflow_id, deployment_id, force):
+    def _verify_dependencies_not_affected(self,
+                                          workflow_id, deployment, force):
         if workflow_id not in ['stop', 'uninstall', 'update']:
             return
         dep_graph = RecursiveDeploymentDependencies(get_storage_manager())
+
+        # if we're in the middle of an execution initiated by the component
+        # creator, we'd like to drop the component dependency from the list
+        excluded_ids = self._excluded_component_creator_ids(deployment)
+
         deployment_dependencies = \
-            dep_graph.retrieve_and_display_dependencies(deployment_id)
+            dep_graph.retrieve_and_display_dependencies(
+                deployment.id, excluded_ids=excluded_ids)
+
         if not deployment_dependencies:
             return
         # TODO: track in the events and logs for auditing purposes
+
         if force:
             return
         raise manager_exceptions.DependentExistsError(
             "Can't execute workflow `{0}` on deployment {1} - the "
             "following existing installations depend on it:\n{2}".format(
-                workflow_id, deployment_id, deployment_dependencies
+                workflow_id, deployment.id, deployment_dependencies
             )
         )
+
+    def _excluded_component_creator_ids(self, deployment):
+        component_creator_deployment = \
+            [x.source_deployment.id for x in
+             deployment.target_of_dependency_in if
+             'component' in x.dependency_creator.split('.')[0]]
+        if component_creator_deployment:
+            component_creator_executions = self.sm.list(
+                models.Execution, filters={
+                    'deployment_id': component_creator_deployment[0],
+                    'status': 'started',
+                    'workflow_id': ['stop', 'uninstall', 'update']}
+            )
+            if len(component_creator_executions) > 0:
+                return [component_creator_deployment[0]]
+        return []
 
     @staticmethod
     def _any_running_executions(executions):
